@@ -35,7 +35,7 @@ const upload = multer({ dest: 'uploads/' });
 
 // === SSH config ===
 const sshConfig = {
-  host: '192.168.214.1',
+  host: '192.168.222.1',
   username: 'admin',
   password: '@1qaz2wsx'
 };
@@ -75,55 +75,10 @@ async function getFortigateUsers() {
     }
   } catch (err) {
     console.error('SSH error:', err);
-    throw new Error(getSSHErrorMessage(err));
   } finally {
-    try {
-      ssh.close();
-    } catch (closeErr) {
-      console.error('SSH close error:', closeErr);
-    }
+    ssh.close();
   }
   return users;
-}
-
-// === SSH Error Handler ===
-function getSSHErrorMessage(err) {
-  if (err.code === 'ECONNREFUSED') {
-    return 'Connection refused. Please check if FortiGate is accessible and SSH is enabled.';
-  } else if (err.code === 'ENOTFOUND') {
-    return 'Host not found. Please check the FortiGate IP address.';
-  } else if (err.code === 'ETIMEDOUT') {
-    return 'Connection timeout. Please check network connectivity to FortiGate.';
-  } else if (err.message && err.message.includes('Authentication failed')) {
-    return 'SSH authentication failed. Please check username and password.';
-  } else if (err.message && err.message.includes('Permission denied')) {
-    return 'SSH permission denied. Please check credentials and user permissions.';
-  } else if (err.message && err.message.includes('Host key verification failed')) {
-    return 'SSH host key verification failed. Please check host key configuration.';
-  } else if (err.code === 'ECONNRESET') {
-    return 'Connection reset by FortiGate. Please check SSH configuration.';
-  } else {
-    return `SSH connection error: ${err.message}`;
-  }
-}
-
-// === Test SSH Connection ===
-async function testSSHConnection() {
-  const ssh = new SSH(sshConfig);
-  try {
-    await ssh.connect();
-    await ssh.exec('get system status');
-    return { success: true, message: 'SSH connection successful' };
-  } catch (err) {
-    console.error('SSH connection test failed:', err);
-    return { success: false, message: getSSHErrorMessage(err) };
-  } finally {
-    try {
-      ssh.close();
-    } catch (closeErr) {
-      console.error('SSH close error:', closeErr);
-    }
-  }
 }
 
 // === Login Routes ===
@@ -158,27 +113,10 @@ app.get('/', requireAuth, async (req, res) => {
     const users = await getFortigateUsers();
     res.render('index', { 
       users: users,
-      username: req.session.username,
-      sshStatus: 'connected'
+      username: req.session.username 
     });
   } catch (err) {
-    console.error('Error loading dashboard:', err);
-    res.render('index', { 
-      users: [],
-      username: req.session.username,
-      sshStatus: 'disconnected',
-      sshError: err.message
-    });
-  }
-});
-
-// === Test SSH Connection Route ===
-app.get('/test-ssh', requireAuth, async (req, res) => {
-  try {
-    const result = await testSSHConnection();
-    res.json(result);
-  } catch (err) {
-    res.json({ success: false, message: err.message });
+    res.status(500).render('error', { error: err.message });
   }
 });
 
@@ -194,16 +132,9 @@ app.post('/add', requireAuth, async (req, res) => {
       backUrl: '/'
     });
   } catch (err) {
-    console.error('Error adding user:', err);
-    res.render('error', { 
-      error: `Failed to add user: ${getSSHErrorMessage(err)}` 
-    });
+    res.status(500).render('error', { error: err.message });
   } finally {
-    try {
-      ssh.close();
-    } catch (closeErr) {
-      console.error('SSH close error:', closeErr);
-    }
+    ssh.close();
   }
 });
 
@@ -234,16 +165,9 @@ end
       backUrl: '/'
     });
   } catch (err) {
-    console.error('Error deleting users:', err);
-    res.render('error', { 
-      error: `Failed to delete users: ${getSSHErrorMessage(err)}` 
-    });
+    res.status(500).render('error', { error: err.message });
   } finally {
-    try {
-      ssh.close();
-    } catch (closeErr) {
-      console.error('SSH close error:', closeErr);
-    }
+    ssh.close();
   }
 });
 
@@ -270,66 +194,23 @@ app.post('/upload-csv', requireAuth, upload.single('csvfile'), async (req, res) 
     })
     .on('end', async () => {
       console.log('Parsed users:', users);
-      
-      if (users.length === 0) {
-        fs.unlinkSync(filePath);
-        return res.render('error', { 
-          error: 'No valid users found in CSV. Please check the format (username, password columns required).' 
-        });
-      }
-
       const ssh = new SSH(sshConfig);
-      let successCount = 0;
-      let errors = [];
-
       try {
         await ssh.connect();
-        
         for (const user of users) {
-          try {
-            const cmd = buildAddUserCommand(user.username, user.password);
-            await ssh.exec(cmd);
-            successCount++;
-          } catch (userErr) {
-            console.error(`Error adding user ${user.username}:`, userErr);
-            errors.push(`${user.username}: ${userErr.message}`);
-          }
+          const cmd = buildAddUserCommand(user.username, user.password);
+          await ssh.exec(cmd);
         }
-
-        if (successCount > 0) {
-          let message = `✅ Successfully added ${successCount} user(s) from CSV.`;
-          if (errors.length > 0) {
-            message += `<br><br>⚠️ ${errors.length} user(s) failed:<br>` + errors.join('<br>');
-          }
-          res.render('success', { 
-            message: message,
-            backUrl: '/'
-          });
-        } else {
-          res.render('error', { 
-            error: `Failed to add any users. Errors: ${errors.join(', ')}` 
-          });
-        }
-      } catch (err) {
-        console.error('SSH connection error during CSV upload:', err);
-        res.render('error', { 
-          error: `SSH connection failed: ${getSSHErrorMessage(err)}` 
+        res.render('success', { 
+          message: `✅ ${users.length} users added from CSV.`,
+          backUrl: '/'
         });
+      } catch (err) {
+        res.status(500).render('error', { error: err.message });
       } finally {
-        try {
-          ssh.close();
-        } catch (closeErr) {
-          console.error('SSH close error:', closeErr);
-        }
+        ssh.close();
         fs.unlinkSync(filePath);
       }
-    })
-    .on('error', (err) => {
-      console.error('CSV parsing error:', err);
-      fs.unlinkSync(filePath);
-      res.render('error', { 
-        error: `Failed to parse CSV file: ${err.message}` 
-      });
     });
 });
 
