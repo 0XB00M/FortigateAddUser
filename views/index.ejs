@@ -29,6 +29,50 @@
       max-height: 300px;
       overflow-y: auto;
     }
+    .select-all-container {
+      background-color: #f8f9fa;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 15px;
+    }
+    .ssh-status {
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    .ssh-connected {
+      background-color: #d4edda;
+      border: 1px solid #c3e6cb;
+      color: #155724;
+    }
+    .ssh-disconnected {
+      background-color: #f8d7da;
+      border: 1px solid #f5c6cb;
+      color: #721c24;
+    }
+    .ssh-status-indicator {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 8px;
+    }
+    .status-connected {
+      background-color: #28a745;
+      animation: pulse 2s infinite;
+    }
+    .status-disconnected {
+      background-color: #dc3545;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+    .disabled-section {
+      opacity: 0.6;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body class="bg-light">
@@ -44,7 +88,48 @@
   </nav>
 
   <div class="container py-5">
-    <div class="row g-4">
+    <!-- SSH Connection Status -->
+    <div class="ssh-status <%= sshStatus.isConnected ? 'ssh-connected' : 'ssh-disconnected' %>">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <span class="ssh-status-indicator <%= sshStatus.isConnected ? 'status-connected' : 'status-disconnected' %>"></span>
+          <strong>FortiGate Connection Status:</strong>
+          <% if (sshStatus.isConnected) { %>
+            <span class="text-success">Connected</span>
+          <% } else { %>
+            <span class="text-danger">Disconnected</span>
+          <% } %>
+        </div>
+        <div>
+          <button class="btn btn-sm btn-outline-primary" onclick="testSSHConnection()">
+            <span id="test-btn-text">Test Connection</span>
+            <span id="test-spinner" class="spinner-border spinner-border-sm d-none" role="status"></span>
+          </button>
+        </div>
+      </div>
+      
+      <% if (!sshStatus.isConnected && sshStatus.lastError) { %>
+        <div class="mt-2">
+          <small><strong>Error:</strong> <%= sshStatus.lastError %></small>
+        </div>
+      <% } %>
+      
+      <% if (sshStatus.lastChecked) { %>
+        <div class="mt-1">
+          <small class="text-muted">Last checked: <%= new Date(sshStatus.lastChecked).toLocaleString() %></small>
+        </div>
+      <% } %>
+    </div>
+
+    <!-- Error Alert -->
+    <% if (error) { %>
+      <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <strong>Error:</strong> <%= error %>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+      </div>
+    <% } %>
+
+    <div class="row g-4 <%= !sshStatus.isConnected ? 'disabled-section' : '' %>">
       <!-- Add user manually -->
       <div class="col-md-4">
         <div class="card h-100">
@@ -55,13 +140,15 @@
             <form method="POST" action="/add">
               <div class="mb-3">
                 <label class="form-label">Username</label>
-                <input name="username" class="form-control" required>
+                <input name="username" class="form-control" required <%= !sshStatus.isConnected ? 'disabled' : '' %>>
               </div>
               <div class="mb-3">
                 <label class="form-label">Password</label>
-                <input name="password" type="password" class="form-control" required>
+                <input name="password" type="password" class="form-control" required <%= !sshStatus.isConnected ? 'disabled' : '' %>>
               </div>
-              <button type="submit" class="btn btn-success btn-custom w-100">Add User</button>
+              <button type="submit" class="btn btn-success btn-custom w-100" <%= !sshStatus.isConnected ? 'disabled' : '' %>>
+                Add User
+              </button>
             </form>
           </div>
         </div>
@@ -77,10 +164,12 @@
             <form action="/upload-csv" method="POST" enctype="multipart/form-data">
               <div class="mb-3">
                 <label class="form-label">Upload CSV File</label>
-                <input type="file" name="csvfile" class="form-control" accept=".csv" required>
+                <input type="file" name="csvfile" class="form-control" accept=".csv" required <%= !sshStatus.isConnected ? 'disabled' : '' %>>
                 <div class="form-text">CSV should contain 'username' and 'password' columns</div>
               </div>
-              <button type="submit" class="btn btn-primary btn-custom w-100">Upload and Add</button>
+              <button type="submit" class="btn btn-primary btn-custom w-100" <%= !sshStatus.isConnected ? 'disabled' : '' %>>
+                Upload and Add
+              </button>
             </form>
           </div>
         </div>
@@ -93,25 +182,43 @@
             <h5 class="card-title mb-0">❌ Bulk Delete Users</h5>
           </div>
           <div class="card-body">
-            <form method="POST" action="/delete-multiple">
+            <form method="POST" action="/delete-multiple" id="deleteForm">
+              <% if (users && users.length > 0) { %>
+                <!-- Select All Section -->
+                <div class="select-all-container">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="selectAll" <%= !sshStatus.isConnected ? 'disabled' : '' %>>
+                    <label class="form-check-label fw-bold" for="selectAll">
+                      Select All Users
+                    </label>
+                  </div>
+                </div>
+              <% } %>
+              
               <div class="user-list">
                 <% if (users && users.length > 0) { %>
                   <% users.forEach(function(user) { %>
                     <div class="form-check mb-2">
-                      <input class="form-check-input" type="checkbox" name="usernames" value="<%= user %>" id="user-<%= user %>">
+                      <input class="form-check-input user-checkbox" type="checkbox" name="usernames" value="<%= user %>" id="user-<%= user %>" <%= !sshStatus.isConnected ? 'disabled' : '' %>>
                       <label class="form-check-label" for="user-<%= user %>">
                         <%= user %>
                       </label>
                     </div>
                   <% }); %>
                 <% } else { %>
-                  <div class="text-muted">No users found</div>
+                  <div class="text-muted">
+                    <% if (!sshStatus.isConnected) { %>
+                      Unable to load users (connection error)
+                    <% } else { %>
+                      No users found
+                    <% } %>
+                  </div>
                 <% } %>
               </div>
-              <% if (users && users.length > 0) { %>
-                <button type="submit" class="btn btn-danger btn-custom w-100 mt-3" 
-                        onclick="return confirm('Are you sure you want to delete the selected users?')">
-                  Delete Selected
+              <% if (users && users.length > 0 && sshStatus.isConnected) { %>
+                <button type="submit" class="btn btn-danger btn-custom w-100 mt-3" id="deleteBtn" disabled
+                        onclick="return confirmDelete()">
+                  Delete Selected (<span id="selectedCount">0</span>)
                 </button>
               <% } %>
             </form>
@@ -134,8 +241,12 @@
                 <div class="text-muted">Total Users</div>
               </div>
               <div class="col-md-3">
-                <div class="h4 text-success">✅</div>
-                <div class="text-muted">System Online</div>
+                <div class="h4 <%= sshStatus.isConnected ? 'text-success' : 'text-danger' %>">
+                  <%= sshStatus.isConnected ? '✅' : '❌' %>
+                </div>
+                <div class="text-muted">
+                  <%= sshStatus.isConnected ? 'System Online' : 'System Offline' %>
+                </div>
               </div>
               <div class="col-md-3">
                 <div class="h4 text-info">🔐</div>
@@ -152,10 +263,113 @@
     </div>
 
     <footer class="mt-5 text-center text-muted small">
-      © 2025 FortiGate Manager | Connected to <%= users ? users.length : 0 %> users
+      © 2025 FortiGate Manager | 
+      <span class="<%= sshStatus.isConnected ? 'text-success' : 'text-danger' %>">
+        <%= sshStatus.isConnected ? 'Connected' : 'Disconnected' %>
+      </span>
+      | <%= users ? users.length : 0 %> users
     </footer>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Handle Select All functionality
+    document.addEventListener('DOMContentLoaded', function() {
+      const selectAllCheckbox = document.getElementById('selectAll');
+      const userCheckboxes = document.querySelectorAll('.user-checkbox');
+      const deleteBtn = document.getElementById('deleteBtn');
+      const selectedCount = document.getElementById('selectedCount');
+
+      // Function to update selected count and button state
+      function updateDeleteButton() {
+        const checkedBoxes = document.querySelectorAll('.user-checkbox:checked');
+        const count = checkedBoxes.length;
+        
+        if (selectedCount) {
+          selectedCount.textContent = count;
+        }
+        if (deleteBtn) {
+          deleteBtn.disabled = count === 0;
+        }
+        
+        // Update select all checkbox state
+        if (selectAllCheckbox) {
+          if (count === 0) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = false;
+          } else if (count === userCheckboxes.length) {
+            selectAllCheckbox.indeterminate = false;
+            selectAllCheckbox.checked = true;
+          } else {
+            selectAllCheckbox.indeterminate = true;
+            selectAllCheckbox.checked = false;
+          }
+        }
+      }
+
+      // Handle Select All checkbox
+      if (selectAllCheckbox) {
+        selectAllCheckbox.addEventListener('change', function() {
+          const isChecked = this.checked;
+          userCheckboxes.forEach(checkbox => {
+            checkbox.checked = isChecked;
+          });
+          updateDeleteButton();
+        });
+      }
+
+      // Handle individual checkboxes
+      userCheckboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', updateDeleteButton);
+      });
+
+      // Initial update
+      updateDeleteButton();
+    });
+
+    // Confirmation dialog for deletion
+    function confirmDelete() {
+      const checkedBoxes = document.querySelectorAll('.user-checkbox:checked');
+      const count = checkedBoxes.length;
+      
+      if (count === 0) {
+        alert('Please select at least one user to delete.');
+        return false;
+      }
+      
+      const usernames = Array.from(checkedBoxes).map(cb => cb.value).join(', ');
+      return confirm(`Are you sure you want to delete ${count} user(s)?\n\nUsers: ${usernames}`);
+    }
+
+    async function testSSHConnection() {
+      const testBtn = document.getElementById('test-btn-text');
+      const spinner = document.getElementById('test-spinner');
+      
+      // Show loading state
+      testBtn.classList.add('d-none');
+      spinner.classList.remove('d-none');
+      
+      try {
+        const response = await fetch('/test-ssh');
+        const result = await response.json();
+        
+        // Reload page to update status
+        setTimeout(() => {
+          location.reload();
+        }, 500);
+        
+      } catch (error) {
+        console.error('Error testing SSH connection:', error);
+        // Reset button state
+        testBtn.classList.remove('d-none');
+        spinner.classList.add('d-none');
+      }
+    }
+
+    // Auto-refresh connection status every 30 seconds
+    setInterval(() => {
+      testSSHConnection();
+    }, 30000);
+  </script>
 </body>
 </html>
